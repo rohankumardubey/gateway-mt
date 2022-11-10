@@ -5,8 +5,11 @@ package sharing
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
 	"net/http"
 	"net/url"
+	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -17,7 +20,9 @@ import (
 )
 
 func (handler *Handler) handleStandard(ctx context.Context, w http.ResponseWriter, r *http.Request) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	var pr parsedRequest
 	path := strings.TrimPrefix(r.URL.Path, "/")

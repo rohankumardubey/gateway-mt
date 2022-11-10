@@ -5,10 +5,7 @@ package middleware
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-
-	"github.com/spacemonkeygo/monkit/v3"
 )
 
 // RequestIDKey is the key that holds the unique request ID in a request context.
@@ -22,9 +19,6 @@ const XStorjRequestID = "X-Storj-Request-Id"
 func AddRequestID(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := r.Header.Get(XStorjRequestID)
-		if requestID == "" {
-			requestID = fmt.Sprintf("%x", monkit.NewId())
-		}
 
 		w.Header().Set(XStorjRequestID, requestID)
 		ctx := context.WithValue(r.Context(), requestIDKey{}, requestID)

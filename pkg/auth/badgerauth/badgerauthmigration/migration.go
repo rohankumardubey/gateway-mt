@@ -6,10 +6,12 @@ package badgerauthmigration
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
+	"os"
+	"runtime"
 	"time"
 
-	badger "github.com/outcaste-io/badger/v3"
-	"github.com/spacemonkeygo/monkit/v3"
+	"github.com/outcaste-io/badger/v3"
 	"github.com/zeebo/errs"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -34,7 +36,6 @@ type Config struct {
 // badgerauth backend by incorporating both, implementing migration and proxying
 // requests to both backends to avoid downtime.
 type KV struct {
-	mon *monkit.Scope
 	log *zap.Logger
 	src *sqlauth.KV
 	dst *badgerauth.Node
@@ -51,7 +52,6 @@ var (
 // New constructs new KV.
 func New(log *zap.Logger, src *sqlauth.KV, dst *badgerauth.Node, config Config) *KV {
 	return &KV{
-		mon:    monkit.Package(),
 		log:    log,
 		src:    src,
 		dst:    dst,
@@ -65,7 +65,9 @@ func New(log *zap.Logger, src *sqlauth.KV, dst *badgerauth.Node, config Config) 
 // We write to both stores to ensure we can perform a rollback in case of
 // anything.
 func (kv *KV) Put(ctx context.Context, keyHash authdb.KeyHash, record *authdb.Record) (err error) {
-	defer kv.mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	// createdAt is truncated to Unix time to make sure both stores get the same
 	// time. Otherwise, this could cause issues during the migration when
@@ -79,7 +81,7 @@ func (kv *KV) Put(ctx context.Context, keyHash authdb.KeyHash, record *authdb.Re
 	}
 	kv.log.Debug("Wrote to sqlauth", zap.Binary("keyHash", keyHash.Bytes()))
 	if err := kv.dst.PutAtTime(ctx, keyHash, record, createdAt); err != nil {
-		kv.mon.Event("as_badgerauthmigration_destination_put_err")
+		span.AddEvent("as_badgerauthmigration_destination_put_err")
 		return Error.New("failed to write to badgerauth: %w", err)
 	}
 	kv.log.Debug("Wrote to badgerauth", zap.Binary("keyHash", keyHash.Bytes()))
@@ -89,7 +91,9 @@ func (kv *KV) Put(ctx context.Context, keyHash authdb.KeyHash, record *authdb.Re
 // Get retrieves the record from the key/value store. It returns nil if the key
 // does not exist. If the record is invalid, the error contains why.
 func (kv *KV) Get(ctx context.Context, keyHash authdb.KeyHash) (record *authdb.Record, err error) {
-	defer kv.mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 	// First, try to get the record from the destination store and only fall
 	// back to source store if needed.
 	record, err = kv.dst.Get(ctx, keyHash)
@@ -106,10 +110,10 @@ func (kv *KV) Get(ctx context.Context, keyHash authdb.KeyHash) (record *authdb.R
 				zap.Binary("MacaroonHead", record.MacaroonHead),
 				zap.Timep("ExpiresAt", record.ExpiresAt),
 			)
-			kv.mon.Event("as_badgerauthmigration_destination_miss")
+			span.AddEvent("as_badgerauthmigration_destination_miss")
 		}
 	} else {
-		kv.mon.Event("as_badgerauthmigration_destination_hit")
+		span.AddEvent("as_badgerauthmigration_destination_hit")
 	}
 	return record, Error.Wrap(err)
 }
@@ -121,7 +125,9 @@ func (*KV) DeleteUnused(context.Context, time.Duration, int, int) (int64, int64,
 
 // PingDB attempts to do a database roundtrip and returns an error if it can't.
 func (kv *KV) PingDB(ctx context.Context) (err error) {
-	defer kv.mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	return Error.Wrap(errs.Combine(kv.dst.PingDB(ctx), kv.src.PingDB(ctx)))
 }

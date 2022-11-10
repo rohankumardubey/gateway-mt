@@ -6,11 +6,16 @@ package badgerauth
 import (
 	"bytes"
 	"context"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric/global"
+	"go.opentelemetry.io/otel/trace"
+	"os"
+	"runtime"
 	"time"
 
-	badger "github.com/outcaste-io/badger/v3"
+	"github.com/outcaste-io/badger/v3"
 	"github.com/outcaste-io/badger/v3/options"
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/zeebo/errs"
 	"go.uber.org/zap"
 
@@ -90,30 +95,33 @@ func OpenDB(log *zap.Logger, config Config) (*DB, error) {
 
 // gcValueLog garbage collects value log. It always returns a nil error.
 func (db *DB) gcValueLog(ctx context.Context) (err error) {
-	defer mon.Task()(&ctx)(nil)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 gcLoop:
 	for err == nil {
-		gcFinished := mon.TaskNamed("gc")(&ctx)
+		ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, "gc")
+		defer span.End()
 		select {
 		case <-ctx.Done():
 			err = ctx.Err()
 		default:
 			// Run GC and optionally silence ErrNoRewrite errors:
 			if err = db.db.RunValueLogGC(.5); errs.Is(err, badger.ErrNoRewrite) {
-				gcFinished(nil)
 				err = nil
 				break gcLoop
 			}
 		}
-		gcFinished(&err)
 	}
 	db.log.Info("value log garbage collection finished", zap.Error(err))
 	return nil
 }
 
 func (db *DB) checkFirstStart() (err error) {
-	defer mon.Task(db.eventTags()...)(nil)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	_, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(context.Background(), runtime.FuncForPC(pc).Name(), trace.WithAttributes(attribute.String("node_id", db.config.ID.String())))
+	defer span.End()
 
 	if db.config.FirstStart {
 		return nil // first-start is toggled true, so we're safe to end here
@@ -133,7 +141,9 @@ func (db *DB) checkFirstStart() (err error) {
 // prepare ensures there's a value in the database.
 // this allows to ensure that the database is functional.
 func (db *DB) prepare() (err error) {
-	defer mon.Task(db.eventTags()...)(nil)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	_, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(context.Background(), runtime.FuncForPC(pc).Name(), trace.WithAttributes(attribute.String("node_id", db.config.ID.String())))
+	defer span.End()
 
 	return db.db.Update(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(nodeIDKey))
@@ -165,7 +175,9 @@ func (db *DB) Put(ctx context.Context, keyHash authdb.KeyHash, record *authdb.Re
 // PutAtTime stores the record at a specific time.
 // It is an error if the key already exists.
 func (db *DB) PutAtTime(ctx context.Context, keyHash authdb.KeyHash, record *authdb.Record, now time.Time) (err error) {
-	defer mon.Task(db.eventTags()...)(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	_, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(context.Background(), runtime.FuncForPC(pc).Name(), trace.WithAttributes(attribute.String("node_id", db.config.ID.String())))
+	defer span.End()
 
 	// The check below is to make sure we conform to the KV interface
 	// definition, and it's performed outside of the transaction because it's
@@ -200,7 +212,9 @@ func (db *DB) PutAtTime(ctx context.Context, keyHash authdb.KeyHash, record *aut
 // Get retrieves the record from the key/value store. It returns nil if the key
 // does not exist. If the record is invalid, the error contains why.
 func (db *DB) Get(ctx context.Context, keyHash authdb.KeyHash) (record *authdb.Record, err error) {
-	defer mon.Task(db.eventTags()...)(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	_, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(context.Background(), runtime.FuncForPC(pc).Name(), trace.WithAttributes(attribute.String("node_id", db.config.ID.String())))
+	defer span.End()
 
 	return record, Error.Wrap(db.db.View(func(txn *badger.Txn) error {
 		r, err := lookupRecordWithTxn(txn, keyHash)
@@ -212,7 +226,7 @@ func (db *DB) Get(ctx context.Context, keyHash authdb.KeyHash) (record *authdb.R
 		}
 
 		if r.InvalidationReason != "" {
-			mon.Event("as_badgerauth_record_terminated", db.eventTags()...)
+			span.AddEvent("as_badgerauth_record_terminated", trace.WithAttributes(attribute.String("node_id", db.config.ID.String())))
 			return authdb.Invalid.New("%s", r.InvalidationReason)
 		}
 
@@ -237,7 +251,10 @@ func (db *DB) DeleteUnused(context.Context, time.Duration, int, int) (int64, int
 
 // PingDB attempts to do a database roundtrip and returns an error if it can't.
 func (db *DB) PingDB(ctx context.Context) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	var meter = global.MeterProvider().Meter(os.Getenv("SERVICE_NAME"))
+	defer span.End()
 
 	err = db.db.View(func(txn *badger.Txn) error {
 		_, err := txn.Get([]byte(nodeIDKey))
@@ -251,8 +268,10 @@ func (db *DB) PingDB(ctx context.Context) (err error) {
 	// TODO(artur): we can also report information from Levels() or Tables() or
 	// cache's metrics.
 	lsm, vlog := db.db.Size()
-	mon.IntVal("as_badgerauth_kv_bytes_lsm").Observe(lsm)
-	mon.IntVal("as_badgerauth_kv_bytes_vlog").Observe(vlog)
+	counter, _ := meter.SyncInt64().Histogram("as_badgerauth_kv_bytes_lsm")
+	counter.Record(ctx, lsm)
+	counter, _ = meter.SyncInt64().Histogram("as_badgerauth_kv_bytes_vlog")
+	counter.Record(ctx, vlog)
 
 	return nil
 }
@@ -264,13 +283,16 @@ func (db *DB) UnderlyingDB() *badger.DB {
 }
 
 func (db *DB) txnWithBackoff(ctx context.Context, f func(txn *badger.Txn) error) error {
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 	// db.config.ConflictBackoff needs to be copied. Otherwise, we are using one
 	// for all queries.
 	conflictBackoff := db.config.ConflictBackoff
 	for {
 		if err := db.db.Update(f); err != nil {
 			if errs.Is(err, badger.ErrConflict) && !conflictBackoff.Maxed() {
-				mon.Event("as_badgerauth_txn_backoff")
+				span.AddEvent("as_badgerauth_txn_backoff")
 				if err := conflictBackoff.Wait(ctx); err != nil {
 					return err
 				}
@@ -325,7 +347,9 @@ func (db *DB) findResponseEntries(nodeID NodeID, clock Clock) ([]*pb.Replication
 
 // ensureClock ensures an initial clock (=0) exists for a given id.
 func (db *DB) ensureClock(ctx context.Context, id NodeID) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	return Error.Wrap(db.txnWithBackoff(ctx, func(txn *badger.Txn) error {
 		return ensureClock(txn, id)
@@ -358,7 +382,9 @@ func (db *DB) buildRequestEntries() ([]*pb.ReplicationRequestEntry, error) {
 }
 
 func (db *DB) insertResponseEntries(ctx context.Context, response *pb.ReplicationResponse) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	return Error.Wrap(db.txnWithBackoff(ctx, func(txn *badger.Txn) error {
 		for i, entry := range response.Entries {
@@ -422,17 +448,15 @@ func (db *DB) deleteRecord(ctx context.Context, keyHash authdb.KeyHash) error {
 	}))
 }
 
-func (db *DB) eventTags() []monkit.SeriesTag {
-	return []monkit.SeriesTag{
-		monkit.NewSeriesTag("node_id", db.config.ID.String()),
-	}
-}
-
 // InsertRecord inserts a record, adding a corresponding replication log entry
 // consistent with the record's state.
 //
 // InsertRecord can be used to insert on any node for any node.
 func InsertRecord(log *zap.Logger, txn *badger.Txn, nodeID NodeID, keyHash authdb.KeyHash, record *pb.Record) error {
+	pc, _, _, _ := runtime.Caller(0)
+	_, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(context.Background(), runtime.FuncForPC(pc).Name())
+	var meter = global.MeterProvider().Meter(os.Getenv("SERVICE_NAME"))
+	defer span.End()
 	if record.State != pb.Record_CREATED {
 		return errOperationNotSupported
 	}
@@ -452,11 +476,11 @@ func InsertRecord(log *zap.Logger, txn *badger.Txn, nodeID NodeID, keyHash authd
 		keyHashField := zap.Binary("keyHash", keyHash.Bytes())
 		if !recordsEqual(record, &loaded) {
 			log.Warn("encountered duplicate key, but values aren't equal", nodeIDField, keyHashField)
-			mon.Event("as_badgerauth_duplicate_key", monkit.NewSeriesTag("values_equal", "false"))
+			span.AddEvent("as_badgerauth_duplicate_key", trace.WithAttributes(attribute.String("values_equal", "false")))
 			return errKeyAlreadyExistsRecordsNotEqual
 		}
 		log.Info("encountered duplicate key. See https://github.com/storj/gateway-mt/issues/210", nodeIDField, keyHashField)
-		mon.Event("as_badgerauth_duplicate_key", monkit.NewSeriesTag("values_equal", "true"))
+		span.AddEvent("as_badgerauth_duplicate_key", trace.WithAttributes(attribute.String("values_equal", "true")))
 	} else if !errs.Is(err, badger.ErrKeyNotFound) {
 		return Error.Wrap(err)
 	}
@@ -471,8 +495,8 @@ func InsertRecord(log *zap.Logger, txn *badger.Txn, nodeID NodeID, keyHash authd
 		return Error.Wrap(err)
 	}
 
-	mon.IntVal("as_badgerauth_current_clock",
-		monkit.NewSeriesTag("node_id", nodeID.String())).Observe(int64(clock))
+	counter, _ := meter.SyncInt64().Histogram("as_badgerauth_current_clock")
+	counter.Record(context.Background(), int64(clock))
 
 	mainEntry := badger.NewEntry(keyHash.Bytes(), marshaled)
 	rlogEntry := ReplicationLogEntry{
@@ -485,11 +509,11 @@ func InsertRecord(log *zap.Logger, txn *badger.Txn, nodeID NodeID, keyHash authd
 	if record.ExpiresAtUnix > 0 {
 		// TODO(artur): maybe it would be good to report buckets given TTL would
 		// fall into (for later analysis).
-		mon.Event("as_badgerauth_expiring_insert")
+		span.AddEvent("as_badgerauth_expiring_insert")
 		mainEntry.ExpiresAt = uint64(record.ExpiresAtUnix)
 		rlogEntry.ExpiresAt = uint64(record.ExpiresAtUnix)
 	} else {
-		mon.Event("as_badgerauth_insert")
+		span.AddEvent("as_badgerauth_insert")
 	}
 
 	return Error.Wrap(errs.Combine(txn.SetEntry(mainEntry), txn.SetEntry(rlogEntry)))

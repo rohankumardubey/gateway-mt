@@ -5,6 +5,9 @@ package auth
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
+	"os"
+	"runtime"
 
 	"github.com/zeebo/errs"
 	"go.uber.org/zap"
@@ -19,7 +22,9 @@ import (
 
 // OpenKV opens the database connection with the appropriate driver.
 func OpenKV(ctx context.Context, log *zap.Logger, config Config) (_ authdb.KV, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	driver, _, _, err := dbutil.SplitConnStr(config.KVBackend)
 	if err != nil {

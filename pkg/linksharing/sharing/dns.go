@@ -5,6 +5,9 @@ package sharing
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
+	"os"
+	"runtime"
 	"time"
 
 	"github.com/miekg/dns"
@@ -34,7 +37,9 @@ func NewDNSClient(dnsServerAddr string) (*DNSClient, error) {
 // Lookup is a helper method that never returns truncated DNS messages.
 // The current implementation does this by doing all lookups over TCP.
 func (cli *DNSClient) Lookup(ctx context.Context, host string, recordType uint16) (_ *dns.Msg, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 	m := dns.Msg{}
 	m.SetQuestion(dns.Fqdn(host), recordType)
 	r, _, err := cli.c.ExchangeContext(ctx, &m, cli.dnsServer)

@@ -13,12 +13,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go.opentelemetry.io/otel"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"runtime"
 	"time"
 
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/zeebo/errs"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -36,7 +38,6 @@ const (
 var (
 	// Error is the error class for this package.
 	Error errs.Class = "gcslock"
-	mon              = monkit.Package()
 )
 
 // Mutex is a distributed lock implemented on top of Google Cloud Storage.
@@ -58,7 +59,9 @@ type Mutex struct {
 
 // Lock locks m.
 func (m *Mutex) Lock(ctx context.Context) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	for {
 		// Step 1: create the object at the given URL
@@ -108,7 +111,9 @@ func (m *Mutex) Lock(ctx context.Context) (err error) {
 
 // Unlock unlocks m.
 func (m *Mutex) Unlock(ctx context.Context) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	// Step 1: stop refreshing the lock in the background
 	if m.refreshCycle != nil {
@@ -154,7 +159,9 @@ type Options struct {
 // NewMutex initializes new Mutex. If TTL and RefreshInterval aren't set in opt,
 // reasonable defaults are applied.
 func NewMutex(ctx context.Context, opt Options) (_ *Mutex, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	c, err := google.CredentialsFromJSON(ctx, opt.JSONKey, "https://www.googleapis.com/auth/devstorage.full_control")
 	if err != nil {
@@ -188,7 +195,9 @@ func NewMutex(ctx context.Context, opt Options) (_ *Mutex, err error) {
 }
 
 func (m *Mutex) put(ctx context.Context) (_ *http.Response, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	u := xmlAPIEndpoint(m.bucket, m.name)
 
@@ -211,7 +220,9 @@ func (m *Mutex) put(ctx context.Context) (_ *http.Response, err error) {
 //
 // NOTE(artur): unfortunately, we have to use JSON API for this, not XML.
 func (m *Mutex) refresh(ctx context.Context) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	reqData := struct {
 		Metadata map[string]string `json:"metadata"`
@@ -264,7 +275,9 @@ func (m *Mutex) refresh(ctx context.Context) (err error) {
 }
 
 func (m *Mutex) head(ctx context.Context) (_ *http.Response, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	u := xmlAPIEndpoint(m.bucket, m.name)
 
@@ -278,7 +291,9 @@ func (m *Mutex) head(ctx context.Context) (_ *http.Response, err error) {
 
 // shouldWait treats every error as transient.
 func (m *Mutex) shouldWait(ctx context.Context, statusCode int, headers http.Header) bool {
-	defer mon.Task()(&ctx)(nil)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	if statusCode != http.StatusOK {
 		return statusCode != http.StatusNotFound
@@ -305,7 +320,9 @@ func (m *Mutex) shouldWait(ctx context.Context, statusCode int, headers http.Hea
 }
 
 func (m *Mutex) delete(ctx context.Context, metageneration string) (_ *http.Response, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	u := xmlAPIEndpoint(m.bucket, m.name)
 

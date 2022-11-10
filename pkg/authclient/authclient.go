@@ -6,19 +6,19 @@ package authclient
 import (
 	"context"
 	"encoding/json"
+	"go.opentelemetry.io/otel"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
+	"runtime"
 
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/zeebo/errs"
 
 	"storj.io/common/lrucache"
 	"storj.io/gateway-mt/pkg/errdata"
 	"storj.io/gateway-mt/pkg/middleware"
 )
-
-var mon = monkit.Package()
 
 // AuthClient communicates with the Auth Service.
 type AuthClient struct {
@@ -37,7 +37,9 @@ func New(config Config) *AuthClient {
 // of the client that originated the request and it's required to be sent to the
 // Auth Service.
 func (a *AuthClient) Resolve(ctx context.Context, accessKeyID string, clientIP string) (_ AuthServiceResponse, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	reqURL, err := url.Parse(a.BaseURL)
 	if err != nil {
@@ -114,7 +116,9 @@ func (a *AuthClient) Resolve(ctx context.Context, accessKeyID string, clientIP s
 // cache and returns cached authservice's successful responses if caching is
 // enabled.
 func (a *AuthClient) ResolveWithCache(ctx context.Context, accessKeyID string, clientIP string) (_ AuthServiceResponse, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	if a.Cache == nil {
 		return a.Resolve(ctx, accessKeyID, clientIP)
@@ -150,7 +154,9 @@ func (a *AuthClient) ResolveWithCache(ctx context.Context, accessKeyID string, c
 
 // GetHealthLive returns the auth service health live status.
 func (a *AuthClient) GetHealthLive(ctx context.Context) (_ bool, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	baseURL, err := url.Parse(a.BaseURL)
 	if err != nil {

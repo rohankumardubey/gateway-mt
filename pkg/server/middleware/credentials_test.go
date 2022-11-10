@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -223,9 +222,6 @@ func TestAuthResponseErrorLogging(t *testing.T) {
 			filteredLogs := observedLogs.FilterField(zap.String("error", fmt.Sprintf("auth service: invalid status code: %d", tc.status)))
 			require.Len(t, filteredLogs.All(), 1)
 			require.Equal(t, tc.expectedLevel, filteredLogs.All()[0].Level)
-
-			c := monkit.Collect(monkit.ScopeNamed("storj.io/gateway-mt/pkg/server/middleware"))
-			require.Equal(t, 1.0, c[fmt.Sprintf("%s,api=SYSTEM,error=auth\\ service:\\ invalid\\ status\\ code:\\ %d,scope=storj.io/gateway-mt/pkg/server/middleware total", tc.expectedMetric, tc.status)])
 		})
 	}
 }
@@ -556,10 +552,6 @@ AccessKey/20000101/region/s3
 
 			authClient := authclient.New(authclient.Config{BaseURL: authService.URL, Token: "token", Timeout: 5 * time.Second})
 
-			metricKey := fmt.Sprintf("auth,scope=storj.io/gateway-mt/pkg/server/middleware,type=%s,version=%s value", tc.authType, tc.authVersion)
-			c := monkit.Collect(monkit.ScopeNamed("storj.io/gateway-mt/pkg/server/middleware"))
-			initialCount := c[metricKey]
-
 			AccessKey(authClient, trustedip.NewListTrustAll(), zap.L())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				creds := GetAccess(r.Context())
 				if tc.expectedAccessKey == "" {
@@ -579,8 +571,6 @@ AccessKey/20000101/region/s3
 				require.Equal(t, tc.expectedErrorStatus, rr.Code)
 			}
 
-			c = monkit.Collect(monkit.ScopeNamed("storj.io/gateway-mt/pkg/server/middleware"))
-			require.Equal(t, initialCount+tc.expectedCount, c[metricKey])
 		})
 	}
 }

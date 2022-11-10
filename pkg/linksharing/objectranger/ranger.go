@@ -5,16 +5,13 @@ package objectranger
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
 	"io"
-
-	"github.com/spacemonkeygo/monkit/v3"
+	"os"
+	"runtime"
 
 	"storj.io/common/ranger"
 	"storj.io/uplink"
-)
-
-var (
-	mon = monkit.Package()
 )
 
 // ObjectRanger holds all the data needed to make object downloadable.
@@ -40,6 +37,8 @@ func (ranger *ObjectRanger) Size() int64 {
 
 // Range returns object read/close interface.
 func (ranger *ObjectRanger) Range(ctx context.Context, offset, length int64) (_ io.ReadCloser, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 	return ranger.p.DownloadObject(ctx, ranger.bucket, ranger.o.Key, &uplink.DownloadOptions{Offset: offset, Length: length})
 }

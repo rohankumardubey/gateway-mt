@@ -12,10 +12,12 @@ package drpcauth
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
 	"net"
 	"net/url"
+	"os"
+	"runtime"
 
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/zeebo/errs"
 	"go.uber.org/zap"
 
@@ -28,8 +30,6 @@ import (
 	"storj.io/drpc/drpcwire"
 	"storj.io/gateway-mt/pkg/auth/authdb"
 )
-
-var mon = monkit.Package()
 
 // Server is a collection of dependencies for the DRPC-based service
 // It is an interface for clients like Uplink to use the auth service.
@@ -66,7 +66,9 @@ func (g *Server) RegisterAccess(
 	ctx context.Context,
 	request *pb.EdgeRegisterAccessRequest,
 ) (_ *pb.EdgeRegisterAccessResponse, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	g.log.Debug("DRPC RegisterAccess request")
 
@@ -96,7 +98,9 @@ func (g *Server) registerAccessImpl(
 	ctx context.Context,
 	request *pb.EdgeRegisterAccessRequest,
 ) (_ *pb.EdgeRegisterAccessResponse, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	accessKey, err := authdb.NewEncryptionKey()
 	if err != nil {
@@ -124,7 +128,9 @@ func StartListen(
 	maximumBuffer memory.Size,
 	listener net.Listener,
 ) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	mux := drpcmux.New()
 

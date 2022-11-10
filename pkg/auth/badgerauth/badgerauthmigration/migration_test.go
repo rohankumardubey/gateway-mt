@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -37,7 +36,6 @@ func testKV(t *testing.T, srcConnstr string) {
 		defer ctx.Check(src.Close)
 
 		kv := New(log, src, node, Config{})
-		kv.mon = monkit.Default.ScopeNamed(t.Name())
 
 		require.NoError(t, kv.PingDB(ctx))
 		require.NoError(t, src.MigrateToLatest(ctx))
@@ -152,11 +150,6 @@ func testKV(t *testing.T, srcConnstr string) {
 		require.NoError(t, err)
 
 		assert.Equal(t, &r3, actual)
-
-		scope := t.Name()
-		c := monkit.Collect(monkit.ScopeNamed(scope))
-		assert.EqualValues(t, 100, c["as_badgerauthmigration_destination_miss,scope="+scope+" total"])
-		assert.EqualValues(t, 101, c["as_badgerauthmigration_destination_hit,scope="+scope+" total"])
 	})
 }
 

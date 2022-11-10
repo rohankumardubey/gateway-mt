@@ -6,14 +6,16 @@ package server
 import (
 	"context"
 	"fmt"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gorilla/mux/otelmux"
+	"go.opentelemetry.io/otel"
 	"net"
 	"net/http"
+	"os"
+	"runtime"
 	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/spacemonkeygo/monkit/v3"
-	mhttp "github.com/spacemonkeygo/monkit/v3/http"
 	"github.com/zeebo/errs"
 	"go.uber.org/zap"
 
@@ -31,7 +33,6 @@ import (
 )
 
 var (
-	mon = monkit.Package()
 
 	// Error is an error class S3 Gateway http server error.
 	Error = errs.Class("gateway")
@@ -58,6 +59,10 @@ func New(config Config, log *zap.Logger, trustedIPs trustedip.List, corsAllowedO
 	r.SkipClean(true)
 	r.UseEncodedPath()
 
+	_, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(context.Background(), "gateway Startup")
+	span.AddEvent("gateway service starting")
+	span.End()
+
 	publicServices := r.PathPrefix("/-/").Subrouter()
 	publicServices.HandleFunc("/health", healthCheck)
 	publicServices.HandleFunc("/version", versionInfo)
@@ -77,10 +82,8 @@ func New(config Config, log *zap.Logger, trustedIPs trustedip.List, corsAllowedO
 	}
 	minio.RegisterAPIRouter(r, layer, domainNames, concurrentAllowed, corsAllowedOrigins)
 
-	r.Use(func(handler http.Handler) http.Handler {
-		return mhttp.TraceHandler(handler, mon)
-	})
-	r.Use(middleware.NewMetrics("gmt"))
+	//r.Use(middleware.NewMetrics("gmt"))
+	r.Use(otelmux.Middleware(os.Getenv("SERVICE_NAME")))
 	r.Use(middleware.AccessKey(authClient, trustedIPs, log))
 	r.Use(middleware.CollectEvent)
 	r.Use(minio.GlobalHandlers...)
@@ -148,7 +151,9 @@ func versionInfo(w http.ResponseWriter, r *http.Request) {
 
 // Run starts the S3 compatible http server.
 func (s *Peer) Run(ctx context.Context) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	// Minio, Gateway, and the LogTarget are global, so additionally ensure only one
 	// of each are added, such may be the case if starting multiple servers in parallel.

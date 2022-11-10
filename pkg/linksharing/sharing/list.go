@@ -5,10 +5,13 @@ package sharing
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
 	"html/template"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -31,7 +34,9 @@ type listObject struct {
 }
 
 func (handler *Handler) servePrefix(ctx context.Context, w http.ResponseWriter, project *uplink.Project, pr *parsedRequest, archivePath string) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	var input struct {
 		Title       string

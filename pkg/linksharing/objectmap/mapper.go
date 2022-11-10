@@ -5,15 +5,15 @@ package objectmap
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
 	"net"
+	"os"
+	"runtime"
 	"strings"
 	"sync"
 
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/zeebo/errs"
 )
-
-var mon = monkit.Package()
 
 // Error is the default error class for objectmap.
 var Error = errs.Class("objectmap error")
@@ -65,7 +65,9 @@ func (mapper *IPDB) Close() (err error) {
 
 // GetIPInfos returns the geolocation information from an IP address.
 func (mapper *IPDB) GetIPInfos(ctx context.Context, hostOrIP string) (_ *IPInfo, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	mapper.mu.RLock()
 	cacheItem, ok := mapper.cachedIPs[hostOrIP]

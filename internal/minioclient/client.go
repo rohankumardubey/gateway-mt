@@ -11,7 +11,7 @@ import (
 	"io"
 	"net/http"
 
-	minio "github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/minio/minio-go/v7/pkg/signer"
 	"github.com/zeebo/errs"

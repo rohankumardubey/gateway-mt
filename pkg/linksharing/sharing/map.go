@@ -7,8 +7,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"go.opentelemetry.io/otel"
 	"net/http"
 	"net/url"
+	"os"
+	"runtime"
 
 	"go.uber.org/zap"
 
@@ -26,7 +29,9 @@ type location struct {
 }
 
 func (handler *Handler) getLocations(ctx context.Context, pr *parsedRequest) (locs []location, pieceCount int64, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	ipSummary, err := object.GetObjectIPSummary(ctx, *handler.uplink, pr.access, pr.bucket, pr.realKey)
 	if err != nil {
@@ -55,7 +60,9 @@ func (handler *Handler) getLocations(ctx context.Context, pr *parsedRequest) (lo
 }
 
 func (handler *Handler) serveMap(ctx context.Context, w http.ResponseWriter, locations []location, pieces int64, o *uplink.Object, q url.Values) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	m := reference.WorldMap()
 

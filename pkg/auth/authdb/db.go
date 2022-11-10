@@ -8,11 +8,16 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base32"
+	"fmt"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/zeebo/errs"
 
 	"storj.io/common/encryption"
@@ -22,8 +27,6 @@ import (
 	"storj.io/common/storj"
 	"storj.io/gateway-mt/pkg/auth/satellitelist"
 )
-
-var mon = monkit.Package()
 
 // NotFound is returned when a record is not found.
 var NotFound = errs.Class("not found")
@@ -140,7 +143,9 @@ func (db *Database) SetAllowedSatellites(allowedSatelliteURLs map[storj.NodeURL]
 // Put encrypts the access grant with the key and stores it in a key/value store under the
 // hash of the encryption key.
 func (db *Database) Put(ctx context.Context, key EncryptionKey, accessGrant string, public bool) (secretKey SecretKey, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	access, err := grant.ParseAccess(accessGrant)
 	if err != nil {
@@ -154,9 +159,12 @@ func (db *Database) Put(ctx context.Context, key EncryptionKey, accessGrant stri
 	if err != nil {
 		return secretKey, err
 	}
-	mon.Event("as_region_use_put", monkit.NewSeriesTag("satellite", satelliteAddr))
+	span.AddEvent("as_region_use_put", trace.WithAttributes(attribute.String("satellite", satelliteAddr)))
 
 	db.mu.Lock()
+	for key, _ := range db.allowedSatelliteURLs {
+		fmt.Println("Key ID:", key.ID.String(), "Key Address:", key.Address)
+	}
 	_, ok := db.allowedSatelliteURLs[nodeURL]
 	db.mu.Unlock()
 	if !ok {
@@ -203,7 +211,9 @@ func (db *Database) Put(ctx context.Context, key EncryptionKey, accessGrant stri
 // Get retrieves an access grant and secret key from the key/value store, looked up by the
 // hash of the access key and then decrypted.
 func (db *Database) Get(ctx context.Context, accessKeyID EncryptionKey) (accessGrant string, public bool, secretKey SecretKey, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	record, err := db.kv.Get(ctx, accessKeyID.Hash())
 	if err != nil {
@@ -227,7 +237,7 @@ func (db *Database) Get(ctx context.Context, accessKeyID EncryptionKey) (accessG
 
 	// log satelliteAddress so we can cross reference if we're actively using the distributed db "globally"
 	if grant, err := grant.ParseAccess(string(ag)); err == nil {
-		mon.Event("as_region_use_get", monkit.NewSeriesTag("satellite", grant.SatelliteAddress))
+		span.AddEvent("as_region_use_get", trace.WithAttributes(attribute.String("satellite", grant.SatelliteAddress)))
 	}
 
 	return string(ag), record.Public, secretKey, nil
@@ -236,7 +246,9 @@ func (db *Database) Get(ctx context.Context, accessKeyID EncryptionKey) (accessG
 // DeleteUnused deletes expired and invalid records from the key/value store and
 // returns any error encountered.
 func (db *Database) DeleteUnused(ctx context.Context, asOfSystemInterval time.Duration, selectSize, deleteSize int) (count, rounds int64, deletesPerHead map[string]int64, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	count, rounds, deletesPerHead, err = db.kv.DeleteUnused(ctx, asOfSystemInterval, selectSize, deleteSize)
 
@@ -245,7 +257,9 @@ func (db *Database) DeleteUnused(ctx context.Context, asOfSystemInterval time.Du
 
 // PingDB attempts to do a DB roundtrip. If it can't it will return an error.
 func (db *Database) PingDB(ctx context.Context) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	return errs.Wrap(db.kv.PingDB(ctx))
 }

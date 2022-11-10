@@ -7,10 +7,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"go.opentelemetry.io/otel"
 	"net/http"
+	"os"
+	"runtime"
 	"strings"
-
-	"github.com/spacemonkeygo/monkit/v3"
 
 	"storj.io/gateway-mt/pkg/errdata"
 	"storj.io/gateway-mt/pkg/server/middleware"
@@ -18,8 +19,6 @@ import (
 	"storj.io/minio/cmd/logger"
 	"storj.io/minio/pkg/auth"
 )
-
-var mon = monkit.Package()
 
 const identityPrefix string = "config/iam/users/"
 const identitySuffix string = "/identity.json"
@@ -52,7 +51,9 @@ func objectPathToUser(key string) string {
 // Auth Service. If passed an iamConfigUsers style objectPath, it returns a
 // JSON-serialized UserIdentity.
 func (iamOS *IAMAuthStore) GetObjectNInfo(ctx context.Context, bucket, object string, _ *minio.HTTPRangeSpec, _ http.Header, _ minio.LockType, _ minio.ObjectOptions) (_ *minio.GetObjectReader, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	// filter out non-user requests (policy, etc).
 	user := objectPathToUser(object)

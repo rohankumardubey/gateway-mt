@@ -6,16 +6,17 @@ package sharing
 import (
 	"context"
 	"errors"
+	"go.opentelemetry.io/otel"
 	"html/template"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
-	"github.com/jtolio/eventkit"
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/zeebo/errs"
 	"go.uber.org/zap"
 
@@ -28,11 +29,6 @@ import (
 	"storj.io/uplink"
 	"storj.io/uplink/private/transport"
 	"storj.io/zipper"
-)
-
-var (
-	mon = monkit.Package()
-	ek  = eventkit.Package()
 )
 
 // pageData is the type that is passed to the template rendering engine.
@@ -219,7 +215,9 @@ func NewHandler(log *zap.Logger, mapper *objectmap.IPDB, config Config) (*Handle
 // ServeHTTP handles link sharing requests.
 func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	defer mon.Task()(&ctx)(nil)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	handlerErr := handler.serveHTTP(ctx, w, r)
 	if handlerErr == nil {
@@ -310,7 +308,9 @@ func (handler *Handler) renderTemplate(w http.ResponseWriter, template string, d
 }
 
 func (handler *Handler) serveHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	if r.Method == http.MethodOptions {
 		// handle CORS pre-flight requests
@@ -359,7 +359,9 @@ func (handler *Handler) cors(ctx context.Context, w http.ResponseWriter, r *http
 }
 
 func (handler *Handler) healthProcess(ctx context.Context, w http.ResponseWriter, r *http.Request) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 	_, err = w.Write([]byte("okay"))
 	return err
 }

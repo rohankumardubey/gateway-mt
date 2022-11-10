@@ -5,6 +5,11 @@ package badgerauth
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+	"os"
+	"runtime"
 	"time"
 
 	"storj.io/common/rpc/rpcstatus"
@@ -26,7 +31,9 @@ func NewAdmin(db *DB) *Admin {
 
 // InvalidateRecord invalidates a record.
 func (admin *Admin) InvalidateRecord(ctx context.Context, req *pb.InvalidateRecordRequest) (_ *pb.InvalidateRecordResponse, err error) {
-	defer mon.Task(admin.db.eventTags()...)(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name(), trace.WithAttributes(attribute.String("node_id", admin.db.config.ID.String())))
+	defer span.End()
 
 	var resp pb.InvalidateRecordResponse
 
@@ -47,7 +54,9 @@ func (admin *Admin) InvalidateRecord(ctx context.Context, req *pb.InvalidateReco
 
 // UnpublishRecord unpublishes a record.
 func (admin *Admin) UnpublishRecord(ctx context.Context, req *pb.UnpublishRecordRequest) (_ *pb.UnpublishRecordResponse, err error) {
-	defer mon.Task(admin.db.eventTags()...)(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name(), trace.WithAttributes(attribute.String("node_id", admin.db.config.ID.String())))
+	defer span.End()
 
 	var resp pb.UnpublishRecordResponse
 
@@ -63,7 +72,9 @@ func (admin *Admin) UnpublishRecord(ctx context.Context, req *pb.UnpublishRecord
 
 // DeleteRecord deletes a database record.
 func (admin *Admin) DeleteRecord(ctx context.Context, req *pb.DeleteRecordRequest) (_ *pb.DeleteRecordResponse, err error) {
-	defer mon.Task(admin.db.eventTags()...)(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name(), trace.WithAttributes(attribute.String("node_id", admin.db.config.ID.String())))
+	defer span.End()
 
 	var resp pb.DeleteRecordResponse
 

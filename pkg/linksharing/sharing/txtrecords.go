@@ -5,6 +5,9 @@ package sharing
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
+	"os"
+	"runtime"
 	"sync"
 	"time"
 
@@ -49,7 +52,9 @@ func newTxtRecords(maxTTL time.Duration, dns *DNSClient, auth *authclient.AuthCl
 // server when applicable. clientIP is the IP of the client that originated the
 // request.
 func (records *txtRecords) fetchAccessForHost(ctx context.Context, hostname string, clientIP string) (access *uplink.Access, root string, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	val, ok := records.cache.Load(hostname)
 	if !ok {
@@ -91,7 +96,9 @@ func (records *txtRecords) fetchAccessForHost(ctx context.Context, hostname stri
 // currentExpiration. clientIP is the IP of the client that originated the
 // request.
 func (records *txtRecords) updateCache(ctx context.Context, hostname string, currentExpiration time.Time, clientIP string) (record *txtRecord, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 	defer records.updateLocks.Lock(hostname)()
 
 	// check if the call to us raced with another updateCache.
@@ -116,7 +123,9 @@ func (records *txtRecords) updateCache(ctx context.Context, hostname string, cur
 // server. clientIP is the IP of the client that originated the request and it's
 // required to be sent to the Auth Service.
 func (records *txtRecords) queryAccessFromDNS(ctx context.Context, hostname string, clientIP string) (record *txtRecord, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	r, err := records.dns.Lookup(ctx, "txt-"+hostname, dns.TypeTXT)
 	if err != nil {

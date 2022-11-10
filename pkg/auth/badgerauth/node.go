@@ -7,14 +7,18 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/hex"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"net"
+	"os"
+	"runtime"
 	"sync"
 	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/outcaste-io/badger/v3"
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/zeebo/errs"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -33,8 +37,6 @@ import (
 )
 
 var (
-	mon = monkit.Package()
-
 	// Error is the default error class for the badgerauth package.
 	Error = errs.Class("badgerauth")
 
@@ -218,7 +220,9 @@ func (node *Node) PutAtTime(ctx context.Context, keyHash authdb.KeyHash, record 
 // putting a record onto one authservice node, but then retrieving it from
 // another before the record has been fully synced.
 func (node *Node) Get(ctx context.Context, keyHash authdb.KeyHash) (record *authdb.Record, err error) {
-	defer mon.Task(node.db.eventTags()...)(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	_, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(context.Background(), runtime.FuncForPC(pc).Name(), trace.WithAttributes(attribute.String("node_id", node.db.config.ID.String())))
+	defer span.End()
 
 	record, err = node.db.Get(ctx, keyHash)
 	if err != nil {
@@ -388,7 +392,9 @@ func (node *Node) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingRespon
 
 // Peek allows fetching a specific record from the node.
 func (node *Node) Peek(ctx context.Context, req *pb.PeekRequest) (_ *pb.PeekResponse, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	var kh authdb.KeyHash
 	if err = kh.SetBytes(req.EncryptionKeyHash); err != nil {
@@ -408,7 +414,9 @@ func (node *Node) Peek(ctx context.Context, req *pb.PeekRequest) (_ *pb.PeekResp
 // Replicate implements a node's ability to ship its replication log/records to
 // another node. It responds with RPC errors only.
 func (node *Node) Replicate(ctx context.Context, req *pb.ReplicationRequest) (_ *pb.ReplicationResponse, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	node.log.Debug("received replication request with the following clocks", fieldsFromRequestEntries(req.Entries)...)
 
@@ -500,11 +508,15 @@ func NewPeer(node *Node, address string) *Peer {
 
 // Sync runs the synchronization step once.
 func (peer *Peer) Sync(ctx context.Context) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	return peer.withClient(ctx,
 		func(ctx context.Context, client pb.DRPCReplicationServiceClient) (err error) {
-			defer mon.Task()(&ctx)(&err)
+			pc, _, _, _ := runtime.Caller(0)
+			ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+			defer span.End()
 
 			ok, err := peer.pingClient(ctx, client)
 			if err != nil {
@@ -525,11 +537,15 @@ func (peer *Peer) Sync(ctx context.Context) (err error) {
 
 // Peek returns a record from the peer.
 func (peer *Peer) Peek(ctx context.Context, keyHash authdb.KeyHash) (record *pb.Record, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	return record, peer.withClient(ctx,
 		func(ctx context.Context, client pb.DRPCReplicationServiceClient) (err error) {
-			defer mon.Task()(&ctx)(&err)
+			pc, _, _, _ := runtime.Caller(0)
+			ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+			defer span.End()
 
 			resp, err := client.Peek(ctx, &pb.PeekRequest{EncryptionKeyHash: keyHash.Bytes()})
 			if err != nil {
@@ -542,7 +558,9 @@ func (peer *Peer) Peek(ctx context.Context, keyHash authdb.KeyHash) (record *pb.
 }
 
 func (peer *Peer) pingClient(ctx context.Context, client pb.DRPCReplicationServiceClient) (ok bool, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	resp, err := client.Ping(ctx, &pb.PingRequest{})
 	if err != nil {
@@ -572,7 +590,9 @@ func (peer *Peer) pingClient(ctx context.Context, client pb.DRPCReplicationServi
 }
 
 func (peer *Peer) syncRecords(ctx context.Context, client pb.DRPCReplicationServiceClient) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	db := peer.node.db
 
@@ -605,9 +625,12 @@ func (peer *Peer) syncRecords(ctx context.Context, client pb.DRPCReplicationServ
 }
 
 func (peer *Peer) withClient(ctx context.Context, fn func(ctx context.Context, client pb.DRPCReplicationServiceClient) error, task string) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
-	dialFinished := mon.TaskNamed("dial", monkit.NewSeriesTag("address", peer.address))(&ctx)
+	ctx, span = otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, "dial", trace.WithAttributes(attribute.String("address", peer.address)))
+	defer span.End()
 
 	var conn *rpc.Conn
 	if !peer.node.config.InsecureDisableTLS {
@@ -615,7 +638,6 @@ func (peer *Peer) withClient(ctx context.Context, fn func(ctx context.Context, c
 	} else {
 		conn, err = peer.node.pooledDialer.DialAddressUnencrypted(rpcpool.WithForceDial(ctx), peer.address)
 	}
-	dialFinished(&err)
 
 	if err != nil {
 		peer.log.Named(task).Warn("dial failed", zap.String("address", peer.address), zap.Error(err))
@@ -632,7 +654,10 @@ func (peer *Peer) withClient(ctx context.Context, fn func(ctx context.Context, c
 
 // statusUp changes peer status to up.
 func (peer *Peer) statusUp() {
-	mon.Event("as_badgerauth_peer_up", monkit.NewSeriesTag("address", peer.address))
+	pc, _, _, _ := runtime.Caller(0)
+	_, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(context.Background(), runtime.FuncForPC(pc).Name())
+	defer span.End()
+	span.AddEvent("as_badgerauth_peer_up", trace.WithAttributes(attribute.String("address", peer.address)))
 	peer.changeStatus(func(status *PeerStatus) {
 		status.LastUpdated = time.Now()
 		status.LastWasUp = true
@@ -642,7 +667,10 @@ func (peer *Peer) statusUp() {
 
 // statusDown changes peer status to down.
 func (peer *Peer) statusDown(err error) {
-	mon.Event("as_badgerauth_peer_down", monkit.NewSeriesTag("address", peer.address))
+	pc, _, _, _ := runtime.Caller(0)
+	_, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(context.Background(), runtime.FuncForPC(pc).Name())
+	defer span.End()
+	span.AddEvent("as_badgerauth_peer_down", trace.WithAttributes(attribute.String("address", peer.address)))
 	peer.changeStatus(func(status *PeerStatus) {
 		status.LastUpdated = time.Now()
 		status.LastWasUp = false

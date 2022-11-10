@@ -5,7 +5,10 @@ package sharing
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
 	"io"
+	"os"
+	"runtime"
 
 	"github.com/zeebo/errs"
 
@@ -32,7 +35,9 @@ func (ranger *simpleRanger) Size() int64 {
 
 // Range returns object read/close interface.
 func (ranger *simpleRanger) Range(ctx context.Context, offset, length int64) (_ io.ReadCloser, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 	if offset != 0 {
 		return nil, UnsupportedRange.New("non-zero offset")
 	}

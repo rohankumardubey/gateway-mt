@@ -7,21 +7,20 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"go.opentelemetry.io/otel"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/zeebo/errs"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/acme/autocert"
 	"golang.org/x/sync/errgroup"
 )
-
-var mon = monkit.Package()
 
 const (
 	// DefaultShutdownTimeout is the default ShutdownTimeout (see Config).
@@ -160,7 +159,9 @@ func New(log *zap.Logger, handler http.Handler, config Config) (*Server, error) 
 
 // Run runs the server.
 func (server *Server) Run(ctx context.Context) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	var group errgroup.Group
 

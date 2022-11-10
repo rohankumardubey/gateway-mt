@@ -7,8 +7,7 @@ import (
 	"testing"
 	"time"
 
-	badger "github.com/outcaste-io/badger/v3"
-	"github.com/spacemonkeygo/monkit/v3"
+	"github.com/outcaste-io/badger/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -338,20 +337,6 @@ func TestBasicCycle(t *testing.T) {
 		badgerauthtest.VerifyReplicationLog{
 			Entries: currentReplicationLogEntries,
 		}.Check(ctx, t, node)
-
-		scope := "storj.io/gateway-mt/pkg/auth/badgerauth"
-		c := monkit.Collect(monkit.ScopeNamed(scope))
-
-		for name, count := range map[string]float64{
-			"function,name=(*DB).PutAtTime,node_id=basic,scope=" + scope + " total":                             3,
-			"function,name=(*DB).PutAtTime,node_id=basic,scope=" + scope + " errors":                            2,
-			"function,name=(*DB).Get,node_id=basic,scope=" + scope + " total":                                   3,
-			"function,name=(*DB).Get,node_id=basic,scope=" + scope + " errors":                                  0,
-			"function,error_name=InvalidKey,name=(*DB).PutAtTime,node_id=basic,scope=" + scope + " count":       1,
-			"function,error_name=KeyAlreadyExists,name=(*DB).PutAtTime,node_id=basic,scope=" + scope + " count": 1,
-		} {
-			assert.Equal(t, count, c[name], name)
-		}
 	})
 }
 

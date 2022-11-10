@@ -6,13 +6,15 @@ package gw
 import (
 	"context"
 	"errors"
+	"go.opentelemetry.io/otel"
 	"net/http"
+	"os"
 	"reflect"
+	"runtime"
 	"time"
 
 	miniogo "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/tags"
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/zeebo/errs"
 
 	"storj.io/common/errs2"
@@ -31,8 +33,6 @@ import (
 )
 
 var (
-	mon = monkit.Package()
-
 	gatewayUserAgent = "Gateway-MT/" + version.Build.Version.String()
 
 	// ErrAccessGrant occurs when failing to parse the access grant from the
@@ -209,7 +209,9 @@ type BucketWithAttributionInfo struct {
 // ListBucketsWithAttribution is like ListBuckets, but it associates information
 // about attribution (if any) with each bucket.
 func (l *MultiTenancyLayer) ListBucketsWithAttribution(ctx context.Context) (buckets []BucketWithAttributionInfo, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	project, err := l.openProject(ctx, getAccessGrant(ctx))
 	if err != nil {
@@ -498,7 +500,9 @@ func getAccessGrant(ctx context.Context) string {
 }
 
 func (l *MultiTenancyLayer) openProject(ctx context.Context, accessKey string) (_ *uplink.Project, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	// this happens when an anonymous request hits the gateway endpoint, e.g.
 	// accessing http://localhost:20010 directly.
@@ -515,7 +519,9 @@ func (l *MultiTenancyLayer) openProject(ctx context.Context, accessKey string) (
 }
 
 func (l *MultiTenancyLayer) setupProject(ctx context.Context, access *uplink.Access) (_ *uplink.Project, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	config := l.config
 	config.UserAgent = getUserAgent(ctx)

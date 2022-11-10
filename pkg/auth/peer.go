@@ -7,13 +7,16 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/hex"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric/global"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"runtime"
 	"sort"
 	"time"
 
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/zeebo/errs"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -32,8 +35,6 @@ import (
 	"storj.io/gateway-mt/pkg/auth/satellitelist"
 	"storj.io/gateway-mt/pkg/middleware"
 )
-
-var mon = monkit.Package()
 
 const serverShutdownTimeout = 10 * time.Second
 
@@ -104,6 +105,9 @@ type Peer struct {
 // TODO(artur): New and constructors, in general, shouldn't take context.Context
 // as a parameter.
 func New(ctx context.Context, log *zap.Logger, config Config, configDir string) (*Peer, error) {
+	_, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, "Auth Startup")
+	span.AddEvent("auth service starting")
+	span.End()
 	if len(config.AllowedSatellites) == 0 {
 		return nil, errs.New("allowed satellites parameter '--allowed-satellites' is required")
 	}
@@ -249,7 +253,9 @@ func LogResponses(log *zap.Logger, h http.Handler) http.Handler {
 // Run starts authservice. It is also responsible for shutting servers down
 // when the context is canceled.
 func (p *Peer) Run(ctx context.Context) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	group, groupCtx := errgroup.WithContext(ctx)
 
@@ -397,6 +403,7 @@ func deleteUnusedRecords(
 	adb *authdb.Database,
 	asOfSystemInterval time.Duration,
 	selectSize, deleteSize int) {
+	var meter = global.MeterProvider().Meter(os.Getenv("SERVICE_NAME"))
 	log.Info("Beginning of next iteration of unused records deletion chore")
 
 	count, rounds, heads, err := adb.DeleteUnused(ctx, asOfSystemInterval, selectSize, deleteSize)
@@ -413,8 +420,10 @@ func deleteUnusedRecords(
 		"Heads deleted",
 		zap.Array("heads", headsMapToLoggableHeads(heads)))
 
-	monkit.Package().IntVal("authservice_deleted_unused_records_count").Observe(count)
-	monkit.Package().IntVal("authservice_deleted_unused_records_rounds").Observe(rounds)
+	counter, _ := meter.SyncInt64().Histogram("authservice_deleted_unused_records_count")
+	counter.Record(context.Background(), count)
+	counter, _ = meter.SyncInt64().Histogram("authservice_deleted_unused_records_rounds")
+	counter.Record(context.Background(), rounds)
 }
 
 func headsMapToLoggableHeads(heads map[string]int64) zapcore.ArrayMarshalerFunc {

@@ -5,18 +5,23 @@ package middleware
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric/global"
+	"go.opentelemetry.io/otel/trace"
 	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 	_ "unsafe" // for go:linkname
 
 	"github.com/gorilla/mux"
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/zeebo/errs"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -102,6 +107,9 @@ func AccessKey(authClient *authclient.AuthClient, trustedIPs trustedip.List, log
 }
 
 func logError(log *zap.Logger, err error) {
+	pc, _, _, _ := runtime.Caller(0)
+	_, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(context.Background(), runtime.FuncForPC(pc).Name())
+	defer span.End()
 	// avoid logging access keys from errors, e.g.
 	// "Get \"http://localhost:20000/v1/access/12345\": dial tcp ..."
 	msg := accessRegexp.ReplaceAllString(err.Error(), "[...]\"")
@@ -118,9 +126,9 @@ func logError(log *zap.Logger, err error) {
 		metricName = "gmt_unmapped_error"
 	}
 
-	mon.Event(metricName,
-		monkit.NewSeriesTag("api", "SYSTEM"),
-		monkit.NewSeriesTag("error", msg))
+	span.AddEvent(metricName,
+		trace.WithAttributes(attribute.String("api", "SYSTEM")),
+		trace.WithAttributes(attribute.String("error", msg)))
 
 	ce := log.Check(level, "system")
 	if ce != nil {
@@ -263,6 +271,7 @@ var (
 
 // ParseV4FromHeader parses a V4 signature from the request headers.
 func ParseV4FromHeader(r *http.Request) (_ *V4, err error) {
+	var meter = global.MeterProvider().Meter(os.Getenv("SERVICE_NAME"))
 	vals := v4AuthorizationRegex.FindStringSubmatch(r.Header.Get("Authorization"))
 	if len(vals) != 2 {
 		return nil, ParseV4FromHeaderError.Wrap(errMissingFields.New("%+v", vals))
@@ -304,15 +313,15 @@ func ParseV4FromHeader(r *http.Request) (_ *V4, err error) {
 		kvs = kvs[len(fields[0]):]
 	}
 
-	mon.Counter("auth",
-		monkit.NewSeriesTag("version", "4"),
-		monkit.NewSeriesTag("type", "header")).Inc(1)
+	counter, _ := meter.SyncInt64().Counter("auth")
+	counter.Add(context.Background(), 1, attribute.String("version", "4"), attribute.String("type", "header"))
 
 	return v4, nil
 }
 
 // ParseV4FromFormValues parses a V4 signature from the multipart form parameters.
 func ParseV4FromFormValues(formValues http.Header) (_ *V4, err error) {
+	var meter = global.MeterProvider().Meter(os.Getenv("SERVICE_NAME"))
 	if _, ok := formValues["X-Amz-Signature"]; !ok {
 		return nil, ParseV4FromMPartError.Wrap(errMissingFields.New("no X-Amz-Signature field"))
 	}
@@ -335,15 +344,15 @@ func ParseV4FromFormValues(formValues http.Header) (_ *V4, err error) {
 		return nil, ParseV4FromMPartError.Wrap(errInvalidDate)
 	}
 
-	mon.Counter("auth",
-		monkit.NewSeriesTag("version", "4"),
-		monkit.NewSeriesTag("type", "multipart")).Inc(1)
+	counter, _ := meter.SyncInt64().Counter("auth")
+	counter.Add(context.Background(), 1, attribute.String("version", "4"), attribute.String("type", "multipart"))
 
 	return v4, nil
 }
 
 // ParseV2FromFormValues parses a V2 signature from the multipart form parameters.
 func ParseV2FromFormValues(formValues http.Header) (_ *V2, err error) {
+	var meter = global.MeterProvider().Meter(os.Getenv("SERVICE_NAME"))
 	var ok bool
 	var AccessKeyID, Signature []string
 	if AccessKeyID, ok = formValues[http.CanonicalHeaderKey("AWSAccessKeyId")]; !ok {
@@ -353,9 +362,8 @@ func ParseV2FromFormValues(formValues http.Header) (_ *V2, err error) {
 		return nil, ParseV2FromMPartError.Wrap(errMissingFields.New("no Signature field"))
 	}
 
-	mon.Counter("auth",
-		monkit.NewSeriesTag("version", "2"),
-		monkit.NewSeriesTag("type", "multipart")).Inc(1)
+	counter, _ := meter.SyncInt64().Counter("auth")
+	counter.Add(context.Background(), 1, attribute.String("version", "2"), attribute.String("type", "multipart"))
 
 	return &V2{AccessKeyID: AccessKeyID[0], Signature: Signature[0]}, nil
 }
@@ -381,6 +389,7 @@ func getMultipartReader(r *http.Request) (*multipart.Reader, error) {
 
 // ParseV4FromQuery parses a V4 signature from the query parameters.
 func ParseV4FromQuery(r *http.Request) (_ *V4, err error) {
+	var meter = global.MeterProvider().Meter(os.Getenv("SERVICE_NAME"))
 	q := r.URL.Query()
 
 	algorithm := q.Get("X-Amz-Algorithm")
@@ -409,9 +418,8 @@ func ParseV4FromQuery(r *http.Request) (_ *V4, err error) {
 		return nil, ParseV4FromQueryError.Wrap(errInvalidDate)
 	}
 
-	mon.Counter("auth",
-		monkit.NewSeriesTag("version", "4"),
-		monkit.NewSeriesTag("type", "query")).Inc(1)
+	counter, _ := meter.SyncInt64().Counter("auth")
+	counter.Add(context.Background(), 1, attribute.String("version", "4"), attribute.String("type", "query"))
 
 	return v4, nil
 }
@@ -435,6 +443,7 @@ var v2AuthorizationRegex = regexp.MustCompile("^AWS (?P<key>[^:]+):(?P<sig>.+)$"
 
 // ParseV2FromHeader parses a V2 signature from the request headers.
 func ParseV2FromHeader(r *http.Request) (_ *V2, err error) {
+	var meter = global.MeterProvider().Meter(os.Getenv("SERVICE_NAME"))
 	vals := v2AuthorizationRegex.FindStringSubmatch(r.Header.Get("Authorization"))
 	if len(vals) != 3 {
 		return nil, ParseV2FromHeaderError.Wrap(errMalformedAuthorizationV2)
@@ -447,15 +456,15 @@ func ParseV2FromHeader(r *http.Request) (_ *V2, err error) {
 		FromHeader: true,
 	}
 
-	mon.Counter("auth",
-		monkit.NewSeriesTag("version", "2"),
-		monkit.NewSeriesTag("type", "header")).Inc(1)
+	counter, _ := meter.SyncInt64().Counter("auth")
+	counter.Add(context.Background(), 1, attribute.String("version", "2"), attribute.String("type", "header"))
 
 	return v2, nil
 }
 
 // ParseV2FromQuery parses a V2 signature from the query parameters.
 func ParseV2FromQuery(r *http.Request) (_ *V2, err error) {
+	var meter = global.MeterProvider().Meter(os.Getenv("SERVICE_NAME"))
 	// https://docs.aws.amazon.com/AmazonS3/latest/dev/RESTAuthentication.html#RESTAuthenticationQueryStringAuth
 	v2 := &V2{
 		AccessKeyID: r.URL.Query().Get("AWSAccessKeyId"),
@@ -469,9 +478,8 @@ func ParseV2FromQuery(r *http.Request) (_ *V2, err error) {
 		return nil, ParseV2FromQueryError.Wrap(errInvalidQuery.New("no Signature field"))
 	}
 
-	mon.Counter("auth",
-		monkit.NewSeriesTag("version", "2"),
-		monkit.NewSeriesTag("type", "query")).Inc(1)
+	counter, _ := meter.SyncInt64().Counter("auth")
+	counter.Add(context.Background(), 1, attribute.String("version", "2"), attribute.String("type", "query"))
 
 	return v2, nil
 }

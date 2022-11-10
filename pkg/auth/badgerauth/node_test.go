@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	badger "github.com/outcaste-io/badger/v3"
+	"github.com/outcaste-io/badger/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"

@@ -5,12 +5,16 @@ package badgerauth
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"io"
+	"os"
 	"path"
+	"runtime"
 	"time"
 
 	"github.com/minio/minio-go/v7"
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/zeebo/errs"
 	"golang.org/x/sync/errgroup"
 
@@ -65,7 +69,9 @@ func NewBackup(db *DB, client Client) *Backup {
 //
 //	mybucket/myprefix/mynodeid/2022/04/13/2022-04-13T03:42:07Z
 func (b *Backup) RunOnce(ctx context.Context) (err error) {
-	defer mon.Task(b.eventTags()...)(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name(), trace.WithAttributes(attribute.String("node_id", b.db.config.ID.String())))
+	defer span.End()
 
 	r, w := io.Pipe()
 	t := time.Now().UTC()
@@ -87,10 +93,4 @@ func (b *Backup) RunOnce(ctx context.Context) (err error) {
 	}
 
 	return BackupError.Wrap(group.Wait())
-}
-
-func (b *Backup) eventTags() []monkit.SeriesTag {
-	return []monkit.SeriesTag{
-		monkit.NewSeriesTag("node_id", b.db.config.ID.String()),
-	}
 }

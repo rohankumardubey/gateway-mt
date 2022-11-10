@@ -6,7 +6,7 @@ package badgerauth
 import (
 	"encoding/binary"
 
-	badger "github.com/outcaste-io/badger/v3"
+	"github.com/outcaste-io/badger/v3"
 	"github.com/zeebo/errs"
 )
 

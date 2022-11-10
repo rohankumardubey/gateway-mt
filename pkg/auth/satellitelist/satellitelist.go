@@ -6,20 +6,19 @@ package satellitelist
 import (
 	"bytes"
 	"context"
+	"go.opentelemetry.io/otel"
 	"io"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/zeebo/errs"
 
 	"storj.io/common/rpc"
 	"storj.io/common/storj"
 )
-
-var mon = monkit.Package()
 
 // ErrAllowedSatelliteList is an error class for allowed satellite list errors.
 var ErrAllowedSatelliteList = errs.Class("allowed satellite list")
@@ -31,7 +30,9 @@ var ErrAllowedSatelliteList = errs.Class("allowed satellite list")
 // the same format as https://www.storj.io/dcs-satellites.  HasNodeList indicates
 // if any configValue is a node address list, indicating it should be polled for updates.
 func LoadSatelliteURLs(ctx context.Context, configValues []string) (satMap map[storj.NodeURL]struct{}, hasNodeList bool, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	satMap = make(map[storj.NodeURL]struct{})
 	for _, c := range configValues {
@@ -85,7 +86,9 @@ func readSatelliteList(input []byte, satellites map[storj.NodeURL]struct{}) (err
 // getHTTPList downloads and returns bytes served under url and any error
 // encountered.
 func getHTTPList(ctx context.Context, url string) (_ []byte, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {

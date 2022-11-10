@@ -7,9 +7,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"go.opentelemetry.io/otel"
+	"os"
+	"runtime"
 	"time"
 
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/zeebo/errs"
 	"go.uber.org/zap"
 
@@ -22,8 +24,6 @@ import (
 	"storj.io/private/dbutil/tempdb"
 	"storj.io/private/tagsql"
 )
-
-var mon = monkit.Package()
 
 // Error is default error class for sqlauth package.
 var Error = errs.Class("sqlauth")
@@ -42,7 +42,9 @@ type Options struct {
 
 // Open creates instance of KV.
 func Open(ctx context.Context, log *zap.Logger, connstr string, opts Options) (_ *KV, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	driver, source, impl, err := dbutil.SplitConnStr(connstr)
 	if err != nil {
@@ -62,8 +64,6 @@ func Open(ctx context.Context, log *zap.Logger, connstr string, opts Options) (_
 		return nil, Error.New("failed opening database via DBX at %q: %v", source, err)
 	}
 	log.Debug("Connected to:", zap.String("db source", source))
-
-	dbutil.Configure(ctx, dbxDB.DB, "sqlauth", mon)
 
 	return &KV{
 		db:          dbxDB,
@@ -113,7 +113,9 @@ func (d *KV) TestingSetCleanup(cleanup func() error) {
 
 // MigrateToLatest migrates the kv store to the latest version of the schema.
 func (d *KV) MigrateToLatest(ctx context.Context) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	log := zap.L().Named("migrate")
 	migration := d.Migration(ctx)
@@ -126,7 +128,9 @@ func (d *KV) MigrateToLatest(ctx context.Context) (err error) {
 
 // Put is like PutAtTime, but it uses current time to store the record.
 func (d *KV) Put(ctx context.Context, keyHash authdb.KeyHash, record *authdb.Record) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	return Error.Wrap(d.db.CreateNoReturn_Record(ctx,
 		dbx.Record_EncryptionKeyHash(keyHash[:]),
@@ -144,7 +148,9 @@ func (d *KV) Put(ctx context.Context, keyHash authdb.KeyHash, record *authdb.Rec
 // PutAtTime stores the record at a specific time.
 // It is an error if the key already exists.
 func (d *KV) PutAtTime(ctx context.Context, keyHash authdb.KeyHash, record *authdb.Record, createdAt time.Time) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	return Error.Wrap(d.db.CreateNoReturn_Record(ctx,
 		dbx.Record_EncryptionKeyHash(keyHash[:]),
@@ -167,7 +173,9 @@ func (d *KV) Get(ctx context.Context, keyHash authdb.KeyHash) (*authdb.Record, e
 // GetWithNonDefaultAsOfInterval retrieves the record from the key/value store
 // using the specific asOfSystemInterval.
 func (d *KV) GetWithNonDefaultAsOfInterval(ctx context.Context, keyHash authdb.KeyHash, asOfSystemInterval time.Duration) (_ *authdb.Record, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	if d.impl == dbutil.Cockroach {
 		query := `SELECT
@@ -239,7 +247,9 @@ func (d *KV) GetWithNonDefaultAsOfInterval(ctx context.Context, keyHash authdb.K
 // Delete removes the record from the key/value store.
 // It is not an error if the key does not exist.
 func (d *KV) Delete(ctx context.Context, keyHash authdb.KeyHash) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	_, err = d.db.Delete_Record_By_EncryptionKeyHash(ctx,
 		dbx.Record_EncryptionKeyHash(keyHash[:]))
@@ -250,7 +260,9 @@ func (d *KV) Delete(ctx context.Context, keyHash authdb.KeyHash) (err error) {
 // or invalid) records in a read-only transaction in the past as specified by
 // the asOfSystemInterval interval.
 func (d *KV) selectUnused(ctx context.Context, asOfSystemInterval time.Duration, selectSize int) (pkvals, heads [][]byte, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	tx, err := d.db.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -310,7 +322,9 @@ func (d *KV) selectUnused(ctx context.Context, asOfSystemInterval time.Duration,
 // any error encountered. It uses database time to avoid problems with invalid
 // time on the server.
 func (d *KV) DeleteUnused(ctx context.Context, asOfSystemInterval time.Duration, selectSize, deleteSize int) (count, rounds int64, deletesPerHead map[string]int64, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	deletesPerHead = make(map[string]int64)
 
@@ -374,7 +388,9 @@ func BatchValues(pkvals [][]byte, threshold int) ([][]byte, [][]byte) {
 // It is not an error if the key does not exist.
 // It does not update the invalid reason if the record is already invalid.
 func (d *KV) Invalidate(ctx context.Context, keyHash authdb.KeyHash, reason string) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	return Error.Wrap(d.db.UpdateNoReturn_Record_By_EncryptionKeyHash_And_InvalidReason_Is_Null(ctx,
 		dbx.Record_EncryptionKeyHash(keyHash[:]),
@@ -386,7 +402,9 @@ func (d *KV) Invalidate(ctx context.Context, keyHash authdb.KeyHash, reason stri
 
 // PingDB attempts to do a database roundtrip and returns an error if it can't.
 func (d *KV) PingDB(ctx context.Context) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	return Error.Wrap(d.db.PingContext(ctx))
 }

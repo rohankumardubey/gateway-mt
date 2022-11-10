@@ -5,7 +5,10 @@ package sharing
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
 	"net/http"
+	"os"
+	"runtime"
 	"time"
 
 	"github.com/zeebo/errs"
@@ -31,7 +34,9 @@ func parseAccess(
 	cfg *authclient.AuthClient,
 	clientIP string,
 ) (_ *uplink.Access, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	wrappedParse := func(access string) (*uplink.Access, error) {
 		parsed, err := uplink.ParseAccess(access)

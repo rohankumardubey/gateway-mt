@@ -5,16 +5,16 @@ package memauth
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
+	"os"
+	"runtime"
 	"sync"
 	"time"
 
-	"github.com/spacemonkeygo/monkit/v3"
 	"github.com/zeebo/errs"
 
 	"storj.io/gateway-mt/pkg/auth/authdb"
 )
-
-var mon = monkit.Package()
 
 // KV is a key/value store backed by an in memory map.
 type KV struct {
@@ -32,7 +32,9 @@ func New() *KV {
 // Put stores the record in the key/value store.
 // It is an error if the key already exists.
 func (d *KV) Put(ctx context.Context, keyHash authdb.KeyHash, record *authdb.Record) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -48,7 +50,9 @@ func (d *KV) Put(ctx context.Context, keyHash authdb.KeyHash, record *authdb.Rec
 // Get retrieves the record from the key/value store.
 // It returns nil if the key does not exist.
 func (d *KV) Get(ctx context.Context, keyHash authdb.KeyHash) (record *authdb.Record, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -59,7 +63,9 @@ func (d *KV) Get(ctx context.Context, keyHash authdb.KeyHash) (record *authdb.Re
 // DeleteUnused deletes expired and invalid records from the key/value store and
 // returns any error encountered. It does not perform batch deletion of records.
 func (d *KV) DeleteUnused(ctx context.Context, _ time.Duration, _, _ int) (count, rounds int64, deletesPerHead map[string]int64, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	deletesPerHead = make(map[string]int64)
 

@@ -6,10 +6,26 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
+	"go.opentelemetry.io/otel/metric/global"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.12.0"
+	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -89,6 +105,16 @@ func cmdRun(cmd *cobra.Command, _ []string) (err error) {
 
 	if err := process.InitMetricsWithHostname(ctx, log, nil); err != nil {
 		return errs.New("Failed to initialize telemetry batcher: %w", err)
+	}
+
+	// setup tracing
+	err = initTracer()
+	if err != nil {
+		return errs.New("failed to initialize open telemetry: %w", err)
+	}
+	err = initMeter()
+	if err != nil {
+		return errs.New("failed to initialize open telemetry: %w", err)
 	}
 
 	// setup environment variables for Minio
@@ -258,6 +284,72 @@ func findBoolFlagEarly(flagName string) bool {
 		}
 	}
 	return false
+}
+
+func initTracer() error {
+	ctx := context.Background()
+
+	traceClient := otlptracegrpc.NewClient(
+		otlptracegrpc.WithInsecure(),
+		otlptracegrpc.WithEndpoint(os.Getenv("EXPORTER_ENDPOINT")))
+	sctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	traceExp, err := otlptrace.New(sctx, traceClient)
+	if err != nil {
+		return err
+	}
+
+	res, err := resource.New(ctx,
+		resource.WithFromEnv(),
+		resource.WithProcess(),
+		resource.WithTelemetrySDK(),
+		resource.WithHost(),
+		resource.WithAttributes(
+			// the service name used to display traces in backends
+			semconv.ServiceNameKey.String(os.Getenv("SERVICE_NAME")),
+		),
+	)
+	if err != nil {
+		return err
+	}
+
+	bsp := sdktrace.NewBatchSpanProcessor(traceExp)
+	tracerProvider := sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithResource(res),
+		sdktrace.WithSpanProcessor(bsp),
+	)
+
+	// set global propagator to tracecontext (the default is no-op).
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+	otel.SetTracerProvider(tracerProvider)
+	return nil
+}
+
+func initMeter() error {
+	// The exporter embeds a default OpenTelemetry Reader and
+	// implements prometheus.Collector, allowing it to be used as
+	// both a Reader and Collector.
+	wrappedRegisterer := prometheus.WrapRegistererWithPrefix("gateway_", prometheus.NewRegistry())
+	exporter, err := otelprom.New(otelprom.WithRegisterer(wrappedRegisterer), otelprom.WithoutUnits())
+	if err != nil {
+		log.Fatal(err)
+	}
+	global.SetMeterProvider(metric.NewMeterProvider(metric.WithReader(exporter)))
+
+	// Start the prometheus HTTP server and pass the exporter Collector to it
+	go serveMetrics()
+	return nil
+}
+
+func serveMetrics() {
+	log.Printf("serving metrics at localhost:9153/metrics")
+	http.Handle("/metrics", promhttp.Handler())
+	err := http.ListenAndServe(":9153", nil)
+	if err != nil {
+		fmt.Printf("error serving http: %v", err)
+		return
+	}
 }
 
 func main() {

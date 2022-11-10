@@ -7,12 +7,16 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"mime"
 	"net/http"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
-	"github.com/jtolio/eventkit"
 	"github.com/zeebo/errs"
 	"go.uber.org/zap"
 
@@ -40,7 +44,9 @@ type parsedRequest struct {
 }
 
 func (handler *Handler) present(ctx context.Context, w http.ResponseWriter, r *http.Request, pr *parsedRequest) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	project, err := handler.uplink.OpenProject(ctx, pr.access)
 	if err != nil {
@@ -52,19 +58,21 @@ func (handler *Handler) present(ctx context.Context, w http.ResponseWriter, r *h
 		}
 	}()
 
-	ek.Event("present",
-		eventkit.String("host", r.Host),
-		eventkit.String("uri", r.RequestURI),
-		eventkit.String("method", r.Method),
-		eventkit.Bool("hosting", pr.hosting),
-		eventkit.String("remote-ip", trustedip.GetClientIP(handler.trustedClientIPsList, r)),
-		eventkit.String("macaroon-head", hex.EncodeToString(privateAccess.APIKey(pr.access).Head())))
+	span.AddEvent("present",
+		trace.WithAttributes(attribute.String("host", r.Host)),
+		trace.WithAttributes(attribute.String("uri", r.RequestURI)),
+		trace.WithAttributes(attribute.String("method", r.Method)),
+		trace.WithAttributes(attribute.Bool("hosting", pr.hosting)),
+		trace.WithAttributes(attribute.String("remote-ip", trustedip.GetClientIP(handler.trustedClientIPsList, r))),
+		trace.WithAttributes(attribute.String("macaroon-head", hex.EncodeToString(privateAccess.APIKey(pr.access).Head()))))
 
 	return handler.presentWithProject(ctx, w, r, pr, project)
 }
 
 func (handler *Handler) presentWithProject(ctx context.Context, w http.ResponseWriter, r *http.Request, pr *parsedRequest, project *uplink.Project) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	// first, kick off background index.html request, if appropriate. we do this
 	// to cut down on sequential round trips.
@@ -135,7 +143,9 @@ func (handler *Handler) presentWithProject(ctx context.Context, w http.ResponseW
 }
 
 func (handler *Handler) showObject(ctx context.Context, w http.ResponseWriter, r *http.Request, pr *parsedRequest, project *uplink.Project, o *uplink.Object) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	q := r.URL.Query()
 
@@ -269,7 +279,9 @@ func (handler *Handler) setHeaders(w http.ResponseWriter, r *http.Request, metad
 }
 
 func (handler *Handler) isPrefix(ctx context.Context, project *uplink.Project, pr *parsedRequest) (_ bool, err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	// we might not having listing permission. if this is the case, guess that
 	// we're looking for an index.html and look for that.

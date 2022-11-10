@@ -5,16 +5,7 @@ package middleware
 
 import (
 	"net/http"
-	"strconv"
-	"time"
-
-	"github.com/gorilla/mux"
-	"github.com/spacemonkeygo/monkit/v3"
-
-	"storj.io/gateway-mt/pkg/server/gwlog"
 )
-
-var mon = monkit.Package()
 
 var (
 	_ http.ResponseWriter = (*flusherDelegator)(nil)
@@ -77,105 +68,4 @@ func (f flusherDelegator) Flush() {
 		f.WriteHeader(http.StatusOK)
 	}
 	f.ResponseWriter.(http.Flusher).Flush()
-}
-
-func makeMetricName(prefix, name string) string {
-	return prefix + "_" + name
-}
-
-// sanitizeMethod returns a known HTTP method if m is such method. Otherwise, it
-// returns "unknown".
-//
-// See https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods for known
-// methods.
-func sanitizeMethod(m string) string {
-	switch m {
-	case http.MethodGet, "get":
-		return "get"
-	case http.MethodPut, "put":
-		return "put"
-	case http.MethodHead, "head":
-		return "head"
-	case http.MethodPost, "post":
-		return "post"
-	case http.MethodDelete, "delete":
-		return "delete"
-	case http.MethodConnect, "connect":
-		return "connect"
-	case http.MethodOptions, "options":
-		return "options"
-	case "NOTIFY", "notify":
-		return "notify"
-	case http.MethodTrace, "trace":
-		return "trace"
-	case http.MethodPatch, "patch":
-		return "patch"
-	default:
-		return "unknown"
-	}
-}
-
-// Metrics sends a bunch of useful metrics using monkit:
-// - response time
-// - time to write header
-// - bytes written
-// partitioned by method, status code, API.
-//
-// It also sends unmapped errors (in the case of Gateway-MT).
-//
-// TODO(artur): calculate approximate request size.
-func Metrics(prefix string, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		log, ok := gwlog.FromContext(ctx)
-		if !ok {
-			log = gwlog.New()
-			r = r.WithContext(log.WithContext(ctx))
-		}
-
-		start := time.Now()
-
-		mf := func(name string) measureFunc {
-			return func(code int) {
-				mon.DurationVal(
-					makeMetricName(prefix, name),
-					monkit.NewSeriesTag("api", log.API),
-					monkit.NewSeriesTag("method", sanitizeMethod(r.Method)),
-					monkit.NewSeriesTag("status_code", strconv.Itoa(code)),
-				).Observe(time.Since(start))
-			}
-		}
-
-		d := &flusherDelegator{
-			ResponseWriter:        w,
-			atWriteHeaderFunc:     mf("time_to_header"),
-			atTimeToFirstByteFunc: mf("time_to_first_byte"),
-		}
-
-		next.ServeHTTP(d, r)
-		took := time.Since(start)
-
-		tags := []monkit.SeriesTag{
-			monkit.NewSeriesTag("api", log.API),
-			monkit.NewSeriesTag("method", sanitizeMethod(r.Method)),
-			monkit.NewSeriesTag("status_code", strconv.Itoa(d.status)),
-		}
-
-		mon.DurationVal(makeMetricName(prefix, "response_time"), tags...).Observe(took)
-		mon.IntVal(makeMetricName(prefix, "bytes_written"), tags...).Observe(d.written)
-		mon.FloatVal(makeMetricName(prefix, "bps_written"), tags...).Observe(float64(d.written) / took.Seconds())
-
-		if err := log.TagValue("error"); err != "" { // Gateway-MT-specific
-			tags = append(tags, monkit.NewSeriesTag("error", err))
-			mon.Event(makeMetricName(prefix, "unmapped_error"), tags...)
-		}
-	})
-}
-
-// NewMetrics is a convenience wrapper around Metrics that returns Metrics with
-// prefix as mux.MiddlewareFunc.
-func NewMetrics(prefix string) mux.MiddlewareFunc {
-	return func(h http.Handler) http.Handler {
-		return Metrics(prefix, h)
-	}
 }

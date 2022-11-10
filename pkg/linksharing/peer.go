@@ -5,21 +5,20 @@ package linksharing
 
 import (
 	"context"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"os"
+	"runtime"
+	pkgmiddleware "storj.io/gateway-mt/pkg/middleware"
 
 	"github.com/oschwald/maxminddb-golang"
-	"github.com/spacemonkeygo/monkit/v3"
-	"github.com/spacemonkeygo/monkit/v3/http"
 	"github.com/zeebo/errs"
 	"go.uber.org/zap"
 
 	"storj.io/gateway-mt/pkg/httpserver"
 	"storj.io/gateway-mt/pkg/linksharing/objectmap"
 	"storj.io/gateway-mt/pkg/linksharing/sharing"
-	pkgmiddleware "storj.io/gateway-mt/pkg/middleware"
-	"storj.io/gateway-mt/pkg/server/middleware"
 )
-
-var mon = monkit.Package()
 
 // Config contains configurable values for sno registration Peer.
 type Config struct {
@@ -45,6 +44,10 @@ func New(log *zap.Logger, config Config) (_ *Peer, err error) {
 		Log: log,
 	}
 
+	_, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(context.Background(), "Linksharing Startup")
+	span.AddEvent("linksharing service starting")
+	span.End()
+
 	if config.GeoLocationDB != "" {
 		reader, err := maxminddb.Open(config.GeoLocationDB)
 		if err != nil {
@@ -58,9 +61,11 @@ func New(log *zap.Logger, config Config) (_ *Peer, err error) {
 		return nil, errs.New("unable to create handler: %w", err)
 	}
 
-	handleWithTracing := http.TraceHandler(handle, mon)
-	instrumentedHandle := middleware.Metrics("linksharing", handleWithTracing)
-	handleWithRequestID := pkgmiddleware.AddRequestID(instrumentedHandle)
+	handleWithTracing := otelhttp.NewHandler(handle, "")
+
+	//handleWithTracing := http.TraceHandler(handle, mon)
+	//instrumentedHandle := middleware.Metrics("linksharing", handleWithTracing)
+	handleWithRequestID := pkgmiddleware.AddRequestID(handleWithTracing)
 
 	peer.Server, err = httpserver.New(log, handleWithRequestID, config.Server)
 	if err != nil {
@@ -72,7 +77,9 @@ func New(log *zap.Logger, config Config) (_ *Peer, err error) {
 
 // Run starts the server.
 func (peer *Peer) Run(ctx context.Context) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	return peer.Server.Run(ctx)
 }

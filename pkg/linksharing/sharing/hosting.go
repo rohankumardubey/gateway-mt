@@ -6,9 +6,12 @@ package sharing
 import (
 	"context"
 	"errors"
+	"go.opentelemetry.io/otel"
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"runtime"
 	"strings"
 
 	"go.uber.org/zap"
@@ -20,7 +23,9 @@ import (
 
 // handleHostingService deals with linksharing via custom URLs.
 func (handler *Handler) handleHostingService(ctx context.Context, w http.ResponseWriter, r *http.Request) (err error) {
-	defer mon.Task()(&ctx)(&err)
+	pc, _, _, _ := runtime.Caller(0)
+	ctx, span := otel.Tracer(os.Getenv("SERVICE_NAME")).Start(ctx, runtime.FuncForPC(pc).Name())
+	defer span.End()
 
 	host, _, err := net.SplitHostPort(r.Host)
 	if err != nil {

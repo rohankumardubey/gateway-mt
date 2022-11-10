@@ -4,16 +4,11 @@
 package badgerauth
 
 import (
-	badger "github.com/outcaste-io/badger/v3"
-	"github.com/spacemonkeygo/monkit/v3"
+	"github.com/outcaste-io/badger/v3"
 	"github.com/zeebo/errs"
 
 	"storj.io/gateway-mt/pkg/auth/authdb"
 )
-
-func init() {
-	monkit.AddErrorNameHandler(errorName)
-}
 
 // errorName fits the requirements for monkit.AddErrorNameHandler so that we can
 // provide a useful error tag with mon.Task().
